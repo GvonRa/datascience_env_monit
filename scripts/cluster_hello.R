@@ -17,3 +17,5 @@ cat("Job ID:", Sys.getenv("SLURM_JOB_ID", "none"), "\n")
 cat("Resamples:", n_boot, "\n")
 cat(sprintf("Mean daily GPP: %.2f (95%% CI %.2f to %.2f)\n",
             mean(gpp), ci[1], ci[2]))
+
+# Author: GvonRa
