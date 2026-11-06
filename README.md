@@ -11,4 +11,3 @@ jobs/     Slurm job scripts
 docs/     notes and templates
 
 ## Author
-GvonRa
