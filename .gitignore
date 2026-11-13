@@ -2,4 +2,5 @@
 *.tmp
 *.out
 *.zip
-.envdata/
+.env
+data/
