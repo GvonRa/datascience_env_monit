@@ -1,0 +1,55 @@
+---
+title: "Data summary of my five flux towers"
+author: "Gian Luca von Raesfeld"
+date: today
+format:
+  html:
+    toc: true
+    embed-resources: true
+execute:
+  warning: false
+---
+
+# B2 Read it in
+
+```{r}
+library(readr)
+library(dplyr)
+
+read_hh <- function(zip_file) {
+  keep <- c("TIMESTAMP_START", "TIMESTAMP_END", "TA_F", "SW_IN_F", "VPD_F", "P_F",
+            "NETRAD", "G_F_MDS", "H_F_MDS", "H_F_MDS_QC", "LE_F_MDS", "LE_F_MDS_QC",
+            "NEE_VUT_REF", "NEE_VUT_REF_QC", "GPP_NT_VUT_REF", "RECO_NT_VUT_REF")
+
+  hh_name <- grep("FLUXMET_HH", unzip(zip_file, list = TRUE)$Name, value = TRUE)
+  unzip(zip_file, files = hh_name, exdir = "data/raw/unzipped")
+
+  site_id <- sub(".*_(.*?)_FLUXNET.*", "\\1", basename(zip_file))
+
+  hh <- read_csv(file.path("data/raw/unzipped", hh_name),
+                 na = "-9999",
+                 col_select = any_of(keep),
+                 col_types = cols(TIMESTAMP_START = "c", TIMESTAMP_END = "c", .default = "d")) |>
+    mutate(
+      time = as.POSIXct(TIMESTAMP_START, format = "%Y%m%d%H%M", tz = "UTC"),
+      ID = site_id
+    )
+  
+  return(hh)
+}
+
+```
+
+
+```{r}
+US_Ro5 <- read_hh("data/raw/AMF_US-Ro5_FLUXNET_2017-2024_v1.3_r1.zip")
+Be_Maa <- read_hh("data/raw/ICOS_BE-Maa_FLUXNET_2016-2026_v1.3_r1.zip")
+DE_Hzd <- read_hh("data/raw/ICOS_DE-Hzd_FLUXNET_2010-2025_v1.3_r1.zip")
+JP_Ta2 <- read_hh("data/raw/JPF_JP-Ta2_FLUXNET_2005-2015_v1.3_r1.zip")
+NZ_Add <- read_hh("data/raw/TERN_NZ-ADd_FLUXNET_2016-2020_v1.3_r1.zip")
+```
+
+
+```{r}
+Alltowers <- rbind(US_Ro5,Be_Maa,DE_Hzd,JP_Ta2,NZ_Add)
+```
