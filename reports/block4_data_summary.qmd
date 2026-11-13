@@ -53,3 +53,77 @@ NZ_Add <- read_hh("data/raw/TERN_NZ-ADd_FLUXNET_2016-2020_v1.3_r1.zip")
 ```{r}
 Alltowers <- rbind(US_Ro5,Be_Maa,DE_Hzd,JP_Ta2,NZ_Add)
 ```
+
+
+```{r}
+read_all_hh <- function(zip_dir = "data/raw", pattern = "FLUXNET.*\\.zip$") {
+  library(readr)
+  library(dplyr)
+  
+  keep <- c("TIMESTAMP_START", "TIMESTAMP_END", "TA_F", "SW_IN_F", "VPD_F", "P_F",
+            "NETRAD", "G_F_MDS", "H_F_MDS", "H_F_MDS_QC", "LE_F_MDS", "LE_F_MDS_QC",
+            "NEE_VUT_REF", "NEE_VUT_REF_QC", "GPP_NT_VUT_REF", "RECO_NT_VUT_REF")
+
+  # Alle passenden ZIP-Dateien finden
+  zip_files <- list.files(zip_dir, pattern = pattern, full.names = TRUE)
+  
+  if (length(zip_files) == 0) {
+    stop("No zipfiles in folder.")
+  }
+  
+  # Jede Datei einlesen und ID extrahieren
+  hh_list <- lapply(zip_files, function(zip_file) {
+    hh_name <- grep("FLUXMET_HH", unzip(zip_file, list = TRUE)$Name, value = TRUE)
+    unzip(zip_file, files = hh_name, exdir = "data/raw/unzipped")
+    
+    site_id <- sub(".*_(.*?)_FLUXNET.*", "\\1", basename(zip_file))
+    
+    read_csv(file.path("data/raw/unzipped", hh_name),
+             na = "-9999",
+             col_select = any_of(keep),
+             col_types = cols(TIMESTAMP_START = "c", TIMESTAMP_END = "c", .default = "d")) |>
+      mutate(
+        time = as.POSIXct(TIMESTAMP_START, format = "%Y%m%d%H%M", tz = "UTC"),
+        ID = site_id
+      )
+  })
+  
+  # Alles zusammenführen
+  Alltowers <- bind_rows(hh_list)
+  
+  return(Alltowers)
+}
+
+# Aufruf:
+Alltowers <- read_all_hh()
+
+```
+
+
+
+```{r}
+install.packages("leaflet")
+library(leaflet)
+
+stations <- data.frame(
+  ID = c("US-Ro5", "BE-Maa", "DE-Hzd", "JP-Ta2", "NZ-ADd"),
+  lat = c(44.691, 50.980, 50.964, 36.140, -43.644),  
+  lon = c(-93.058, 5.632, 13.490, 137.371, 172.355),
+  ecosystem = c("Cropland","closed shrubland", "Decidous broadleaf forest", "Evergreen needleleaf forest", "Grassland"),
+  Years = c("2017-2024","2016-2026", "2016-2025","2005-2015", "2016-2020")
+)
+
+leaflet(stations) %>%
+  addTiles() %>%
+  addCircleMarkers(
+    radius = 1,
+    color = "red",
+    fillOpacity = 0.6,
+    label = ~paste0(ID, "<br>Lat: ", lat, "<br>Lon: ", lon)
+  ) %>%
+  fitBounds(min(stations$lon), min(stations$lat),
+            max(stations$lon), max(stations$lat))
+
+```
+
+
