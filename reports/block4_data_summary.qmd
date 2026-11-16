@@ -64,14 +64,14 @@ read_all_hh <- function(zip_dir = "data/raw", pattern = "FLUXNET.*\\.zip$") {
             "NETRAD", "G_F_MDS", "H_F_MDS", "H_F_MDS_QC", "LE_F_MDS", "LE_F_MDS_QC",
             "NEE_VUT_REF", "NEE_VUT_REF_QC", "GPP_NT_VUT_REF", "RECO_NT_VUT_REF")
 
-  # Alle passenden ZIP-Dateien finden
+  
   zip_files <- list.files(zip_dir, pattern = pattern, full.names = TRUE)
   
   if (length(zip_files) == 0) {
     stop("No zipfiles in folder.")
   }
   
-  # Jede Datei einlesen und ID extrahieren
+
   hh_list <- lapply(zip_files, function(zip_file) {
     hh_name <- grep("FLUXMET_HH", unzip(zip_file, list = TRUE)$Name, value = TRUE)
     unzip(zip_file, files = hh_name, exdir = "data/raw/unzipped")
@@ -88,21 +88,22 @@ read_all_hh <- function(zip_dir = "data/raw", pattern = "FLUXNET.*\\.zip$") {
       )
   })
   
-  # Alles zusammenführen
+  
   Alltowers <- bind_rows(hh_list)
   
   return(Alltowers)
 }
 
-# Aufruf:
 Alltowers <- read_all_hh()
+
+Alltowers[Alltowers == -9999] <- NA
+
 
 ```
 
-
+# 1. Location of the flux towers
 
 ```{r}
-install.packages("leaflet")
 library(leaflet)
 
 stations <- data.frame(
@@ -126,4 +127,85 @@ leaflet(stations) %>%
 
 ```
 
+# 2. Heatmap of measured NEE
 
+```{r}
+library(ggplot2)
+library(lubridate)
+library(tidyverse)
+
+Alltowers <- Alltowers %>% 
+  mutate(year = as.integer(year(time)))
+```
+```{r}
+ggplot(Alltowers, aes(x = year, y = ID, fill = NEE_VUT_REF_QC))+
+  geom_tile()
+```
+
+
+# Summary statistics
+
+
+```{r}
+summary_table <- Alltowers %>% 
+  group_by(ID) %>% 
+  summarise(
+    across(c(TA_F, SW_IN_F, VPD_F, NEE_VUT_REF, GPP_NT_VUT_REF, RECO_NT_VUT_REF, H_F_MDS, LE_F_MDS), 
+           list(
+             Mean = ~ mean(.x, na.rm = TRUE),
+             Min = ~ min(.x, na.rm = TRUE),
+             Max = ~ max(.x, na.rm = TRUE),
+             Missing_pct = ~ sum(is.na(.x)) / n() * 100
+           ), .names = "{.col} ({.fn})"),
+    P_F_annual_sum = sum(P_F, na.rm = TRUE) * 24 * 365,
+    P_F_min = min(P_F, na.rm = TRUE),
+    P_F_max = max(P_F, na.rm = TRUE),
+    P_F_missing_pct = sum(is.na(P_F)) / n() * 100
+  )
+
+colnames(summary_table) <- c(
+  "Site (ID)",
+  "TA_F (°C) Mean", "TA_F (°C) Min", "TA_F (°C) Max", "TA_F (%) Missing",
+  "SW_IN_F (W/m²) Mean", "SW_IN_F (W/m²) Min", "SW_IN_F (W/m²) Max", "SW_IN_F (%) Missing",
+  "VPD_F (kPa) Mean", "VPD_F (kPa) Min", "VPD_F (kPa) Max", "VPD_F (%) Missing",
+  "NEE_VUT_REF (µmol/m²/s) Mean", "NEE_VUT_REF (µmol/m²/s) Min", "NEE_VUT_REF (µmol/m²/s) Max", "NEE_VUT_REF (%) Missing",
+  "GPP_NT_VUT_REF (gC/m²/day) Mean", "GPP_NT_VUT_REF (gC/m²/day) Min", "GPP_NT_VUT_REF (gC/m²/day) Max", "GPP_NT_VUT_REF (%) Missing",
+  "RECO_NT_VUT_REF (gC/m²/day) Mean", "RECO_NT_VUT_REF (gC/m²/day) Min", "RECO_NT_VUT_REF (gC/m²/day) Max", "RECO_NT_VUT_REF (%) Missing",
+  "H_F_MDS (W/m²) Mean", "H_F_MDS (W/m²) Min", "H_F_MDS (W/m²) Max", "H_F_MDS (%) Missing",
+  "LE_F_MDS (W/m²) Mean", "LE_F_MDS (W/m²) Min", "LE_F_MDS (W/m²) Max", "LE_F_MDS (%) Missing",
+  "P_F (mm) Annual Sum", "P_F (mm) Min", "P_F (mm) Max", "P_F (%) Missing"
+)
+
+summary_table
+```
+
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+
+Alltowers_daily <- Alltowers %>% 
+  mutate(date = ymd_hm(TIMESTAMP_START)) %>% 
+  group_by(date = as.Date(date), ID) %>% 
+  summarise(
+    NEE_daily = mean(NEE_VUT_REF, na.rm = TRUE) * 1.0378,
+    GPP_daily = mean(GPP_NT_VUT_REF, na.rm = TRUE) * 1.0378,
+    RECO_daily = mean(RECO_NT_VUT_REF, na.rm = TRUE) * 1.0378,
+    .groups = 'drop'
+  )
+
+Alltowers_daily_long <- Alltowers_daily %>% 
+  pivot_longer(cols = c(NEE_daily, GPP_daily, RECO_daily), 
+               names_to = "Variable", 
+               values_to = "Value")
+
+ggplot(Alltowers_daily_long, aes(x = date, y = Value, color = Variable)) + 
+  geom_line() + 
+  facet_wrap(~ ID) + 
+  labs(title = "Daily NEE, GPP, and RECO", 
+       x = "Date", 
+       y = "g C m⁻² d⁻¹") + 
+  theme_minimal()
+
+```
