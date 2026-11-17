@@ -11,50 +11,6 @@ execute:
 ---
 
 # B2 Read it in
-
-```{r}
-library(readr)
-library(dplyr)
-
-read_hh <- function(zip_file) {
-  keep <- c("TIMESTAMP_START", "TIMESTAMP_END", "TA_F", "SW_IN_F", "VPD_F", "P_F",
-            "NETRAD", "G_F_MDS", "H_F_MDS", "H_F_MDS_QC", "LE_F_MDS", "LE_F_MDS_QC",
-            "NEE_VUT_REF", "NEE_VUT_REF_QC", "GPP_NT_VUT_REF", "RECO_NT_VUT_REF")
-
-  hh_name <- grep("FLUXMET_HH", unzip(zip_file, list = TRUE)$Name, value = TRUE)
-  unzip(zip_file, files = hh_name, exdir = "data/raw/unzipped")
-
-  site_id <- sub(".*_(.*?)_FLUXNET.*", "\\1", basename(zip_file))
-
-  hh <- read_csv(file.path("data/raw/unzipped", hh_name),
-                 na = "-9999",
-                 col_select = any_of(keep),
-                 col_types = cols(TIMESTAMP_START = "c", TIMESTAMP_END = "c", .default = "d")) |>
-    mutate(
-      time = as.POSIXct(TIMESTAMP_START, format = "%Y%m%d%H%M", tz = "UTC"),
-      ID = site_id
-    )
-  
-  return(hh)
-}
-
-```
-
-
-```{r}
-US_Ro5 <- read_hh("data/raw/AMF_US-Ro5_FLUXNET_2017-2024_v1.3_r1.zip")
-Be_Maa <- read_hh("data/raw/ICOS_BE-Maa_FLUXNET_2016-2026_v1.3_r1.zip")
-DE_Hzd <- read_hh("data/raw/ICOS_DE-Hzd_FLUXNET_2010-2025_v1.3_r1.zip")
-JP_Ta2 <- read_hh("data/raw/JPF_JP-Ta2_FLUXNET_2005-2015_v1.3_r1.zip")
-NZ_Add <- read_hh("data/raw/TERN_NZ-ADd_FLUXNET_2016-2020_v1.3_r1.zip")
-```
-
-
-```{r}
-Alltowers <- rbind(US_Ro5,Be_Maa,DE_Hzd,JP_Ta2,NZ_Add)
-```
-
-
 ```{r}
 read_all_hh <- function(zip_dir = "data/raw", pattern = "FLUXNET.*\\.zip$") {
   library(readr)
@@ -108,11 +64,18 @@ library(leaflet)
 
 stations <- data.frame(
   ID = c("US-Ro5", "BE-Maa", "DE-Hzd", "JP-Ta2", "NZ-ADd"),
+  Country = c("United States","Belgium", "Germany", "Japan", "New Zealand"),
   lat = c(44.691, 50.980, 50.964, 36.140, -43.644),  
   lon = c(-93.058, 5.632, 13.490, 137.371, 172.355),
   ecosystem = c("Cropland","closed shrubland", "Decidous broadleaf forest", "Evergreen needleleaf forest", "Grassland"),
-  Years = c("2017-2024","2016-2026", "2016-2025","2005-2015", "2016-2020")
+  Years = c("2017-2024","2016-2026", "2016-2025","2005-2015", "2016-2020"),
+  Citation = c("US-Ro5: John Baker, Tim Griffis (2025), AmeriFlux FLUXNET-1F US-Ro5 Rosemount I18_South, Ver. v1.3_r1 (2017-2024), AmeriFlux AMP, (Dataset). https://doi.org/10.17190/AMF/1818371", 
+            "BE-Maa: Roland, M., Bresseleers, S., De Meulder, T., Lefevre, L., Naseer, M., Segers, J., Van Look, J., Vande Sompele, A. (2026). Fluxnet Archive Product from Maasmechelen, 2016-01-01–2026-09-06, FLUXNET, https://hdl.handle.net/11676/msdWDk98FR3UQUqS9OM2N32V",
+            "DE-Hzd: Bernhofer, C., Eichelmann, U., Gruenwald, T., Hehn, M., Mauder, M., Moderow, U., Prasse, H. (2026). Fluxnet Archive Product from Hetzdorf, 2010–2025, FLUXNET, https://hdl.handle.net/11676/0bxipd79PBLdqj1HiB_ghXvT",
+            "JP-Ta2: Saitoh, T.M., Tamagawa, I. (2026). Fluxnet Archive Product from Takayama evergreen coniferous forest site, 2005–2015, FLUXNET, https://hdl.handle.net/11676/CmfB4bc3xT3z8lqsrgqLbIGm",
+            "NZ-ADd: Laubach, J., Hunt, J. (2026): Ashley Dene Dry FLUXNET Release 2026_r1. Version 2026_r1. Terrestrial Ecosystem Research Network (TERN). (Dataset)")
 )
+stations
 
 leaflet(stations) %>%
   addTiles() %>%
@@ -133,18 +96,45 @@ leaflet(stations) %>%
 library(ggplot2)
 library(lubridate)
 library(tidyverse)
+library(dplyr)
 
 Alltowers <- Alltowers %>% 
   mutate(year = as.integer(year(time)))
 ```
+
+
 ```{r}
-ggplot(Alltowers, aes(x = year, y = ID, fill = NEE_VUT_REF_QC))+
-  geom_tile()
+Alltowers_summary <- Alltowers %>% 
+  group_by(ID, year) %>% 
+  summarise(share_measured = mean(NEE_VUT_REF_QC == 0, na.rm = TRUE))
+```
+
+```{r}
+#|fig-width: 8
+#|fig-height: 5
+
+library(ggplot2)
+
+ggplot(Alltowers_summary, aes(x = year, y = ID, fill = share_measured)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "blue") +
+  labs(title = "Share of Half Hours with NEE Measured", 
+       x = "Year", 
+       y = "Site", 
+       fill = "Share Measured") +
+  theme_minimal()
 ```
 
 
-# Summary statistics
+```{r}
+best_data <- Alltowers_summary %>% 
+  filter(share_measured == max(share_measured, na.rm = TRUE))
 
+best_data
+```
+The site in Belgium (Be-Maa) in 2020 has the best data with a share of 64.3% of half hours with NEE measured.
+
+# Summary statistics
 
 ```{r}
 summary_table <- Alltowers %>% 
@@ -179,7 +169,7 @@ colnames(summary_table) <- c(
 summary_table
 ```
 
-
+# 4. Time Series of NEE, GPP and Reco
 ```{r}
 library(dplyr)
 library(ggplot2)
@@ -200,12 +190,203 @@ Alltowers_daily_long <- Alltowers_daily %>%
                names_to = "Variable", 
                values_to = "Value")
 
+```
+
+
+```{r}
+#|fig-width: 10
+#|fig-height: 5
+
 ggplot(Alltowers_daily_long, aes(x = date, y = Value, color = Variable)) + 
-  geom_line() + 
+  geom_line(linewidth = 0.05) + 
   facet_wrap(~ ID) + 
   labs(title = "Daily NEE, GPP, and RECO", 
        x = "Date", 
        y = "g C m⁻² d⁻¹") + 
   theme_minimal()
-
 ```
+
+
+# 6
+```{r}
+Alltowers <- Alltowers %>%
+  mutate(
+    month = lubridate::month(time),
+
+    season = case_when(
+      is.na(lat) ~ NA_character_,
+
+      lat >= 0 & month %in% c(12, 1, 2) ~ "Winter",
+      lat >= 0 & month %in% c(3, 4, 5) ~ "Spring",
+      lat >= 0 & month %in% c(6, 7, 8) ~ "Summer",
+      lat >= 0 & month %in% c(9, 10, 11) ~ "Autumn",
+
+      lat < 0 & month %in% c(12, 1, 2) ~ "Summer",
+      lat < 0 & month %in% c(3, 4, 5) ~ "Autumn",
+      lat < 0 & month %in% c(6, 7, 8) ~ "Winter",
+      lat < 0 & month %in% c(9, 10, 11) ~ "Spring"
+    ),
+
+    season = factor(
+      season,
+      levels = c("Spring", "Summer", "Autumn", "Winter")
+    )
+  )
+
+hourly_long <- Alltowers %>%
+  filter(!is.na(season)) %>%
+  group_by(ID, season, hour) %>%
+  summarise(
+    NEE = mean(NEE_VUT_REF, na.rm = TRUE),
+    LE  = mean(LE_F_MDS, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    cols = c(NEE, LE),
+    names_to = "variable",
+    values_to = "value"
+  )
+```
+
+```{r}
+ggplot( hourly_long, aes(x = hour, y = value, colour = ID, group = ID)) +
+  geom_line(linewidth = 0.7) +
+  facet_grid(variable ~ season, scales = "free_y") +
+  scale_x_continuous(
+    breaks = seq(0, 24, 6),
+    limits = c(0, 24)) +
+  labs(
+    x = "Hour of day",
+    y = "Mean flux (NEE: µmol CO₂ m⁻² s⁻¹; LE: W m⁻²)",
+    colour = "Site",
+    title = "Mean daily course of NEE and LE by season"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    panel.grid.minor = element_blank()
+  )
+```
+
+I added the latitude of each site from the stations table using the site ID. I used latitude to check whether each site is north or south of the equator: positive values mean north and negative values mean south. I assigned seasons based on the month, reversing them for sites in the Southern Hemisphere. Like that, December–February is winter in the Northern Hemisphere but summer in the Southern Hemisphere.
+
+
+# 6 
+```{r}
+energy_data <- Alltowers %>%
+  filter(
+    H_F_MDS_QC == 0,
+    LE_F_MDS_QC == 0,
+    is.finite(H_F_MDS),
+    is.finite(LE_F_MDS),
+    is.finite(NETRAD),
+    is.finite(G_F_MDS)
+  ) %>%
+  mutate(
+    available_energy = NETRAD - G_F_MDS,
+    turbulent_flux = H_F_MDS + LE_F_MDS
+  )
+
+# Anzahl nutzbarer Halbstunden je Standort
+energy_counts <- energy_data %>%
+  count(ID, name = "n_half_hours", sort = TRUE)
+
+print(energy_counts)
+
+if (nrow(energy_counts) == 0) {
+  stop("Kein Standort hat passende H-, LE-, NETRAD- und G-Werte.")
+}
+
+selected_site <- energy_counts$ID[1]
+
+energy_site <- energy_data %>%
+  filter(ID == selected_site)
+
+# Linearer Fit mit frei geschätztem Achsenabschnitt
+fit <- lm(
+  turbulent_flux ~ available_energy,
+  data = energy_site
+)
+
+slope <- unname(coef(fit)[2])
+intercept <- unname(coef(fit)[1])
+r_squared <- summary(fit)$r.squared
+
+ggplot(
+  energy_site,
+  aes(x = available_energy, y = turbulent_flux)
+) +
+  geom_point(alpha = 0.15, size = 0.6, colour = "steelblue") +
+  geom_abline(
+    slope = 1,
+    intercept = 0,
+    linetype = "dashed",
+    colour = "black"
+  ) +
+  geom_smooth(
+    method = "lm",
+    formula = y ~ x,
+    se = FALSE,
+    colour = "firebrick",
+    linewidth = 0.9
+  ) +
+  coord_equal() +
+  labs(
+    title = paste("Energy balance:", selected_site),
+    subtitle = sprintf(
+      "Slope = %.2f; intercept = %.1f W/m²; R² = %.2f; n = %d",
+      slope, intercept, r_squared, nrow(energy_site)
+    ),
+    x = "Available energy: NETRAD − G (W/m²)",
+    y = "Turbulent heat flux: H + LE (W/m²)",
+    caption = paste(
+      "Only half hours with H_QC = 0 and LE_QC = 0.",
+      "Dashed black: 1:1 line; red: linear fit."
+    )
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+
+
+```{r}
+annual_carbon <- Alltowers %>%
+  group_by(ID, year) %>%
+  summarise(
+    n_rows = n(),
+    n_times = n_distinct(date_time),
+    n_NEE = sum(is.finite(NEE_VUT_REF)),
+    NEE_gC_m2_year = sum(
+      NEE_VUT_REF * 1800 * 12.011 / 1e6,
+      na.rm = TRUE
+    ),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    expected_half_hours = if_else(
+      leap_year(year), 366L, 365L
+    ) * 48L,
+    complete_year =
+      n_rows == expected_half_hours &
+      n_times == expected_half_hours &
+      n_NEE == expected_half_hours
+  )
+
+# Kontrolle: Welche Jahre werden eingeschlossen?
+print(annual_carbon)
+
+carbon_summary <- annual_carbon %>%
+  filter(complete_year) %>%
+  group_by(ID) %>%
+  summarise(
+    n_complete_years = n(),
+    mean_annual_NEE = mean(NEE_gC_m2_year),
+    mean_annual_uptake = -mean_annual_NEE,
+    .groups = "drop"
+  ) %>%
+  arrange(desc(mean_annual_uptake))
+
+print(carbon_summary)
+```
+
+Not all of the available energy goes into latent and sensible heat flux.
