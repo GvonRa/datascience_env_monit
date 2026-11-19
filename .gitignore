@@ -4,3 +4,6 @@
 *.zip
 .env
 data/
+
+/.quarto/
+**/*.quarto_ipynb

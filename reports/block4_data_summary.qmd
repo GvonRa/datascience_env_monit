@@ -11,10 +11,11 @@ execute:
 ---
 
 # B2 Read it in
+
 ```{r}
 read_all_hh <- function(zip_dir = "data/raw", pattern = "FLUXNET.*\\.zip$") {
   library(readr)
-  library(dplyr)
+  library(dplyr) 
   
   keep <- c("TIMESTAMP_START", "TIMESTAMP_END", "TA_F", "SW_IN_F", "VPD_F", "P_F",
             "NETRAD", "G_F_MDS", "H_F_MDS", "H_F_MDS_QC", "LE_F_MDS", "LE_F_MDS_QC",
@@ -57,7 +58,7 @@ Alltowers[Alltowers == -9999] <- NA
 
 ```
 
-# 1. Location of the flux towers
+# 1. Location of the flux towers on a map
 
 ```{r}
 library(leaflet)
@@ -76,18 +77,64 @@ stations <- data.frame(
             "NZ-ADd: Laubach, J., Hunt, J. (2026): Ashley Dene Dry FLUXNET Release 2026_r1. Version 2026_r1. Terrestrial Ecosystem Research Network (TERN). (Dataset)")
 )
 stations
+```
 
-leaflet(stations) %>%
-  addTiles() %>%
-  addCircleMarkers(
-    radius = 1,
-    color = "red",
-    fillOpacity = 0.6,
-    label = ~paste0(ID, "<br>Lat: ", lat, "<br>Lon: ", lon)
-  ) %>%
-  fitBounds(min(stations$lon), min(stations$lat),
-            max(stations$lon), max(stations$lat))
 
+
+
+```{r}
+#| fig-width: 10
+#| fig-height: 5
+#| message: false
+#| warning: false
+
+library(ggplot2)
+library(ggrepel)
+
+world <- map_data("world")
+
+ggplot() +
+  geom_polygon(
+    data = world,
+    aes(x = long, y = lat, group = group),
+    fill = "grey92",
+    colour = "white",
+    linewidth = 0.2
+  ) +
+  geom_point(
+    data = stations,
+    aes(x = lon, y = lat),
+    colour = "red3",
+    size = 3
+  ) +
+  geom_label_repel(
+    data = stations,
+    aes(x = lon, y = lat, label = ID),
+    size = 3.5,
+    box.padding = 0.5,
+    min.segment.length = 0,
+    max.overlaps = Inf,
+    seed = 42
+  ) +
+  coord_fixed(
+    ratio = 1,
+    xlim = c(-180, 180),
+    ylim = c(-60, 80),
+    expand = FALSE
+  ) +
+  labs(
+    title = "Flux-tower locations",
+    x = "Longitude (°)",
+    y = "Latitude (°)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.background = element_rect(
+      fill = "aliceblue",
+      colour = NA
+    ),
+    panel.grid.minor = element_blank()
+  )
 ```
 
 # 2. Heatmap of measured NEE
@@ -101,7 +148,6 @@ library(dplyr)
 Alltowers <- Alltowers %>% 
   mutate(year = as.integer(year(time)))
 ```
-
 
 ```{r}
 Alltowers_summary <- Alltowers %>% 
@@ -125,13 +171,13 @@ ggplot(Alltowers_summary, aes(x = year, y = ID, fill = share_measured)) +
   theme_minimal()
 ```
 
-
 ```{r}
 best_data <- Alltowers_summary %>% 
   filter(share_measured == max(share_measured, na.rm = TRUE))
 
 best_data
 ```
+
 The site in Belgium (Be-Maa) in 2020 has the best data with a share of 64.3% of half hours with NEE measured.
 
 # Summary statistics
@@ -170,6 +216,7 @@ summary_table
 ```
 
 # 4. Time Series of NEE, GPP and Reco
+
 ```{r}
 library(dplyr)
 library(ggplot2)
@@ -192,7 +239,6 @@ Alltowers_daily_long <- Alltowers_daily %>%
 
 ```
 
-
 ```{r}
 #|fig-width: 10
 #|fig-height: 5
@@ -206,9 +252,20 @@ ggplot(Alltowers_daily_long, aes(x = date, y = Value, color = Variable)) +
   theme_minimal()
 ```
 
-
 # 6
+
 ```{r}
+
+Alltowers <- Alltowers %>%
+  left_join(
+    stations %>%
+      select(ID, lat, lon),
+    by = "ID") %>%
+    mutate(
+    time = ymd_hm(TIMESTAMP_START),
+    hour = hour(time) + minute(time) / 60,
+    month = month(time))
+
 Alltowers <- Alltowers %>%
   mutate(
     month = lubridate::month(time),
@@ -249,6 +306,8 @@ hourly_long <- Alltowers %>%
 ```
 
 ```{r}
+#|fig-width: 10
+#|fig-height: 5
 ggplot( hourly_long, aes(x = hour, y = value, colour = ID, group = ID)) +
   geom_line(linewidth = 0.7) +
   facet_grid(variable ~ season, scales = "free_y") +
@@ -270,8 +329,8 @@ ggplot( hourly_long, aes(x = hour, y = value, colour = ID, group = ID)) +
 
 I added the latitude of each site from the stations table using the site ID. I used latitude to check whether each site is north or south of the equator: positive values mean north and negative values mean south. I assigned seasons based on the month, reversing them for sites in the Southern Hemisphere. Like that, December–February is winter in the Northern Hemisphere but summer in the Southern Hemisphere.
 
+# 6
 
-# 6 
 ```{r}
 energy_data <- Alltowers %>%
   filter(
@@ -287,74 +346,46 @@ energy_data <- Alltowers %>%
     turbulent_flux = H_F_MDS + LE_F_MDS
   )
 
-# Anzahl nutzbarer Halbstunden je Standort
-energy_counts <- energy_data %>%
-  count(ID, name = "n_half_hours", sort = TRUE)
-
-print(energy_counts)
-
-if (nrow(energy_counts) == 0) {
-  stop("Kein Standort hat passende H-, LE-, NETRAD- und G-Werte.")
-}
-
-selected_site <- energy_counts$ID[1]
 
 energy_site <- energy_data %>%
-  filter(ID == selected_site)
+  filter(ID == "US-Ro5")
 
-# Linearer Fit mit frei geschätztem Achsenabschnitt
-fit <- lm(
-  turbulent_flux ~ available_energy,
-  data = energy_site
-)
+fit <- lm(turbulent_flux ~ available_energy, data = energy_site)
+summary(fit)
+```
 
-slope <- unname(coef(fit)[2])
-intercept <- unname(coef(fit)[1])
-r_squared <- summary(fit)$r.squared
+```{r}
+#|fig-width: 8
+#|fig-height: 5
 
 ggplot(
   energy_site,
-  aes(x = available_energy, y = turbulent_flux)
-) +
+  aes(x = available_energy, y = turbulent_flux)) +
   geom_point(alpha = 0.15, size = 0.6, colour = "steelblue") +
-  geom_abline(
-    slope = 1,
+  geom_abline(slope = 1,
     intercept = 0,
     linetype = "dashed",
-    colour = "black"
-  ) +
-  geom_smooth(
-    method = "lm",
+    colour = "black") +
+  geom_smooth(method = "lm",
     formula = y ~ x,
     se = FALSE,
-    colour = "firebrick",
-    linewidth = 0.9
-  ) +
+    colour = "red",
+    linewidth = 0.9) +
   coord_equal() +
-  labs(
-    title = paste("Energy balance:", selected_site),
-    subtitle = sprintf(
-      "Slope = %.2f; intercept = %.1f W/m²; R² = %.2f; n = %d",
-      slope, intercept, r_squared, nrow(energy_site)
-    ),
+  labs(title = paste("Energy balance: US-Ro5"),
     x = "Available energy: NETRAD − G (W/m²)",
-    y = "Turbulent heat flux: H + LE (W/m²)",
-    caption = paste(
-      "Only half hours with H_QC = 0 and LE_QC = 0.",
-      "Dashed black: 1:1 line; red: linear fit."
-    )
-  ) +
+    y = "Turbulent heat flux: H + LE (W/m²)") +
   theme_minimal(base_size = 12)
 ```
 
-
+Not all of the available energy goes into latent and sensible heat flux. Some of the energy will i.e. be reflected (Albedo) or used for photosynthesis.
 
 ```{r}
 annual_carbon <- Alltowers %>%
   group_by(ID, year) %>%
   summarise(
     n_rows = n(),
-    n_times = n_distinct(date_time),
+    n_times = n_distinct(time),
     n_NEE = sum(is.finite(NEE_VUT_REF)),
     NEE_gC_m2_year = sum(
       NEE_VUT_REF * 1800 * 12.011 / 1e6,
@@ -372,7 +403,6 @@ annual_carbon <- Alltowers %>%
       n_NEE == expected_half_hours
   )
 
-# Kontrolle: Welche Jahre werden eingeschlossen?
 print(annual_carbon)
 
 carbon_summary <- annual_carbon %>%
@@ -386,7 +416,99 @@ carbon_summary <- annual_carbon %>%
   ) %>%
   arrange(desc(mean_annual_uptake))
 
-print(carbon_summary)
 ```
 
-Not all of the available energy goes into latent and sensible heat flux.
+```{r}
+monthly_NEE <- Alltowers %>%
+  filter(is.finite(NEE_VUT_REF)) %>%
+  group_by(ID, year, month) %>%
+  summarise(
+    monthly_NEE = mean(NEE_VUT_REF),
+    .groups = "drop"
+  ) %>%
+  group_by(ID, month) %>%
+  summarise(
+    mean_monthly_NEE = mean(monthly_NEE),
+    .groups = "drop"
+  )
+
+seasonal_summary <- monthly_NEE %>%
+  group_by(ID) %>%
+  summarise(
+    n_months = n(),
+    seasonal_amplitude = if (n() == 12L) {
+      max(mean_monthly_NEE) - min(mean_monthly_NEE)
+    } else {
+      NA_real_
+    },
+    .groups = "drop"
+  )
+
+```
+
+```{r}
+gap_summary <- Alltowers %>%
+  transmute(
+    ID,
+    NEE_value = NEE_VUT_REF,
+    NEE_qc = NEE_VUT_REF_QC,
+    LE_value = LE_F_MDS,
+    LE_qc = LE_F_MDS_QC,
+    H_value = H_F_MDS,
+    H_qc = H_F_MDS_QC
+  ) %>%
+  pivot_longer(
+    cols = -ID,
+    names_to = c("variable", ".value"),
+    names_pattern = "(NEE|LE|H)_(value|qc)"
+  ) %>%
+  group_by(ID, variable) %>%
+  summarise(
+    n_total = n(),
+    n_missing = sum(!is.finite(value)),
+    n_classified = sum(
+      is.finite(value) & qc %in% 0:3
+    ),
+    n_gapfilled = sum(
+      is.finite(value) & qc %in% 1:3
+    ),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    gapfilled_percent = if_else(
+      n_classified > 0,
+      100 * n_gapfilled / n_classified,
+      NA_real_
+    ),
+    missing_percent = 100 * n_missing / n_total
+  )
+
+comparison <- carbon_summary %>%
+  full_join(seasonal_summary, by = "ID") %>%
+  left_join(
+    gap_summary %>%
+      filter(variable == "NEE") %>%
+      select(ID, NEE_gapfilled_percent = gapfilled_percent),
+    by = "ID"
+  )
+
+print(comparison)
+```
+
+The site in Japan (JP-Ta2) has the strongest carbon uptake of all ecosystems. As an evergreen needleleaf forest this makes sense and alligns with the NEE plots on FLuxnet site explorer showing negative NEE values (carbon uptake) almost without seasonal carbon release as would be expected from broadleaf forests. The Germany site (De-Hzd) which is a broadleaf forest shows much lower carbon uptake. That might be due to heat and drought events in central Europe (especially eastern Germany) of the last 10 years. The US site (Us-Ro5) shows the strongest seasonal amplitude which makes sense because it is the only cropland area of the 5 sites showing strong uptake in the growing season and low - no carbon release after harvest. For all 5 towers at between 45 - 70 % of the data is gap-filled.66 and 69 % of gap-filling in Germany and Japan suggests some trouble with data aquisition for those towers.
+
+# References
+
+1.  Pastorello et al. (2020), Scientific Data 7, 225, https://doi.org/10.1038/s41597-020-0534-3
+
+2.  DE-Hzd: Bernhofer, C., Eichelmann, U., Gruenwald, T., Hehn, M., Mauder, M., Moderow, U., Prasse, H. (2026). Fluxnet Archive Product from Hetzdorf, 2010–2025, FLUXNET, https://hdl.handle.net/11676/0bxipd79PBLdqj1HiB_ghXvT
+
+3.  JP-Ta2: Saitoh, T.M., Tamagawa, I. (2026). Fluxnet Archive Product from Takayama evergreen coniferous forest site, 2005–2015, FLUXNET, https://hdl.handle.net/11676/CmfB4bc3xT3z8lqsrgqLbIGm
+
+4.  NZ-ADd: Laubach, J., Hunt, J. (2026): Ashley Dene Dry FLUXNET Release 2026_r1. Version 2026_r1. Terrestrial Ecosystem Research Network (TERN). (Dataset).
+
+5.  US-Ro5: John Baker, Tim Griffis (2025), AmeriFlux FLUXNET-1F US-Ro5 Rosemount I18_South, Ver. v1.3_r1 (2017-2024), AmeriFlux AMP, (Dataset). https://doi.org/10.17190/AMF/1818371
+
+6.  BE-Maa: Roland, M., Bresseleers, S., De Meulder, T., Lefevre, L., Naseer, M., Segers, J., Van Look, J., Vande Sompele, A. (2026). Fluxnet Archive Product from Maasmechelen, 2016-01-01–2026-09-06, FLUXNET, https://hdl.handle.net/11676/msdWDk98FR3UQUqS9OM2N32V
+
+7.  Acknowledgement: FLUXNET data products were produced and harmonized by eddy covariance regional networks and data processing centers, including AmeriFlux, ChinaFlux, European Fluxes Database, ICOS, JapanFlux, KoFlux, OzFlux, SAEON, and TERN. These products also include a modified version of ERA5 hourly data provided by the Copernicus Climate Change Service.
