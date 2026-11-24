@@ -1,24 +1,200 @@
 ---
-title: "Data summary of my five flux towers"
+title: "Block 5: Annual climate anomalies at five flux towers"
 author: "Gian Luca von Raesfeld"
 date: today
 format:
   html:
     toc: true
+    code-fold: true
     embed-resources: true
 execute:
   warning: false
 ---
 
+Project repository: <https://github.com/GvonRa/datascience_env_monit>
+
+# Question and hypothesis
+
+**Question:** How far is each tower year's mean temperature and precipitation from the WorldClim 1970–2000 normal (BIO1, BIO12)?
+
+**Hypothesis:** I expect most tower-years to be warmer than the WorldClim temperature normal because the flux measurements are from recent decades. Precipitation anomalies may be positive or negative and will differ among sites because local precipitation varies strongly. The five towers are located in different climates, which will lead to different results.
+
+# Data
+
+| Dataset | Variables used | Downloaded | Script and changes | Citation |
+|---|---|---|---|---|---|---|
+| FLUXNET | `TA_F` (°C), `P_F` (mm), site and date | From Block 4 snapshot; date not recorded | Existing Block 4 daily files; no changes for this analysis | Site-specific citations and Pastorello et al. (2020), listed under [Citations](#citations) |
+| WorldClim 2.1 | `BIO1` (°C), `BIO12` (mm/year) | Date not recorded | `scripts/block5/02_worldclim.R`; no changes | Fick & Hijmans (2017) |
+| ERA5-Land | `era5l_t2m_C` (°C) | Date not recorded | `scripts/block5/01_era5land.R`; no changes | Muñoz-Sabater et al. (2021) |
+
+# Methods
+
+I joined the daily and static tables by `site_id`, grouped daily observations by tower and calendar year, and compared only complete years with WorldClim. Temperature is the annual mean of daily `TA_F`; precipitation is the annual sum of daily `P_F`. The anomalies are observed annual value minus the WorldClim normal. A positive value means warmer or wetter than the normal, and a negative value means cooler or drier. ERA5-Land `2m_temperature` is supplied in °C in the merged daily table; its annual mean is used as a secondary comparison with `BIO1`.
+
+Years with missing dates or missing values for the variable being analysed are marked `NA`, not filled.
+
 ```{r}
 site_daily <- read.csv(file.path("data/processed/site_daily.csv"))
 site_static <- read.csv(file.path("data/processed/site_static.csv"))
+library(dplyr)
+
+annual_summary <- site_daily %>%
+  mutate(
+    date = as.Date(date),
+    year = as.integer(format(date, "%Y"))
+  ) %>%
+  group_by(site_id, year) %>%
+  summarise(
+    n_dates = n_distinct(date),
+    n_temp = sum(!is.na(TA_F)),
+    n_precip = sum(!is.na(P_F)),
+    n_era5_temp = sum(!is.na(era5l_t2m_C)),
+    observed_mean_temp_C = mean(TA_F, na.rm = TRUE),
+    observed_precip_sum_mm = sum(P_F, na.rm = TRUE),
+    observed_mean_era5_temp_C = mean(era5l_t2m_C, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    expected_days = as.integer(
+      as.Date(paste0(year + 1L, "-01-01")) -
+        as.Date(paste0(year, "-01-01"))
+    )
+  ) %>%
+  left_join(
+    site_static %>% select(site_id, BIO1, BIO12),
+    by = "site_id"
+  ) %>%
+  mutate(
+    annual_mean_temp_C = if_else(
+      n_dates == expected_days & n_temp == expected_days,
+      observed_mean_temp_C, NA_real_
+    ),
+    annual_precip_mm = if_else(
+      n_dates == expected_days & n_precip == expected_days,
+      observed_precip_sum_mm, NA_real_
+    ),
+    annual_era5_temp_C = if_else(
+      n_dates == expected_days & n_era5_temp == expected_days,
+      observed_mean_era5_temp_C, NA_real_
+    ),
+    temp_anomaly_C = annual_mean_temp_C - BIO1,
+    precip_anomaly_mm = annual_precip_mm - BIO12,
+    era5_temp_anomaly_C = annual_era5_temp_C - BIO1
+  ) %>%
+  select(
+    site_id, year, n_dates, n_temp, n_precip, n_era5_temp, expected_days,
+    annual_mean_temp_C, BIO1, temp_anomaly_C,
+    annual_precip_mm, BIO12, precip_anomaly_mm,
+    annual_era5_temp_C, era5_temp_anomaly_C
+  )
 ```
 
+## Site data overview
 
+The table summarizes each tower's WorldClim normals, the number of complete tower-years available for comparison, and the mean annual temperature measured by FLUXNET and ERA5-Land over years with complete values. `BIO12` is an annual precipitation normal; the yearly observed precipitation is therefore calculated as a sum of daily `P_F` values.
+
+```{r}
+site_overview <- annual_summary %>%
+  group_by(site_id) %>%
+  summarise(
+    BIO1_C = first(BIO1),
+    BIO12_mm = first(BIO12),
+    complete_temp_years = sum(!is.na(annual_mean_temp_C)),
+    complete_precip_years = sum(!is.na(annual_precip_mm)),
+    mean_tower_temp_C = mean(annual_mean_temp_C, na.rm = TRUE),
+    mean_ERA5_temp_C = mean(annual_era5_temp_C, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+knitr::kable(site_overview, digits = 1,
+             caption = "WorldClim normals and available annual temperature data by tower")
+```
+
+# Results
+
+## Temperature anomalies
 
 ```{r}
 library(ggplot2)
 
-ggplot(site_daily)
+ggplot(annual_summary, aes(x = year, y = temp_anomaly_C, colour = site_id)) +
+  geom_line() +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "black") +
+  labs(
+    title = "Annual temperature anomalies at all towers",
+    x = "Year",
+    y = "Temperature anomaly [°C]",
+    colour = "Site"
+  ) +
+  theme_minimal()
 ```
+
+## Precipitation anomalies
+
+The DE-Hzd precipitation values are included in the first plot, but they are unusually high and need verification. I could not find any processing mistakes, neither did CoPilot. I will leave them out in the second plot. The magnitude of over 2000 mm of rain each year in eastern Germany is impossible.
+
+```{r}
+ggplot(annual_summary, aes(x = year, y = precip_anomaly_mm, colour = site_id)) +
+  geom_line() +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "black") +
+  labs(
+    title = "Annual precipitation anomalies at all towers",
+    subtitle = "DE-Hzd values are retained but require source-data verification",
+    x = "Year",
+    y = "Precipitation anomaly [mm/year]",
+    colour = "Site"
+  ) +
+  theme_minimal()
+```
+
+For readability, the remaining towers are also shown without DE-Hzd:
+
+```{r}
+ggplot(
+  annual_summary %>% filter(site_id != "DE-Hzd"),
+  aes(x = year, y = precip_anomaly_mm, colour = site_id)
+) +
+  geom_line() +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "black") +
+  labs(
+    title = "Annual precipitation anomalies, excluding DE-Hzd",
+    x = "Year",
+    y = "Precipitation anomaly [mm/year]",
+    colour = "Site"
+  ) +
+  theme_minimal()
+```
+
+The following table gives one summary number per tower: the mean annual anomaly across complete years. The `n` columns show how many complete tower-years each mean uses.
+
+```{r}
+results_by_site <- annual_summary %>%
+  group_by(site_id) %>%
+  summarise(
+    n_temp_years = sum(!is.na(temp_anomaly_C)),
+    mean_temp_anomaly_C = mean(temp_anomaly_C, na.rm = TRUE),
+    n_precip_years = sum(!is.na(precip_anomaly_mm)),
+    mean_precip_anomaly_mm = mean(precip_anomaly_mm, na.rm = TRUE),
+    mean_ERA5_temp_anomaly_C = mean(era5_temp_anomaly_C, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+knitr::kable(results_by_site, digits = 1,
+             caption = "Mean annual anomalies by tower; n is the number of complete years")
+```
+
+# Discussion
+
+The annual results and the summary table show which tower-years are above or below the 1970–2000 normals. The hypothesis of warmer recent years is supported only where the temperature anomalies are positive. Precipitation anomalies vary among towers. DE-Hzd shows odd data for precipitation as mentioned before: its yearly totals are much higher than its WorldClim `BIO12` normal. This makes the precipitation sum not valueable. I could not find the issue unfortunately...
+
+WorldClim and ERA5-Land grids are much larger than the flux footprint. Their grid-cell climate can therefore differ from the conditions influencing the tower fluxes. The comparison is also limited by different record lengths, missing or incomplete years. 
+
+# Citations
+
+**WorldClim:** Fick, S. E. & Hijmans, R. J. (2017). WorldClim 2: new 1-km spatial resolution climate surfaces for global land areas. *International Journal of Climatology*, 37, 4302–4315. <https://doi.org/10.1002/joc.5086>
+
+**ERA5-Land:** Muñoz-Sabater, J. et al. (2021). ERA5-Land: a state-of-the-art global reanalysis dataset for land applications. *Earth System Science Data*, 13, 4349–4383. <https://doi.org/10.5194/essd-13-4349-2021>
+
+**FLUXNET site data:** cite each product used: DE-Hzd, Bernhofer et al. (2026), <https://hdl.handle.net/11676/0bxipd79PBLdqj1HiB_ghXvT>; JP-Ta2, Saitoh & Tamagawa (2026), <https://hdl.handle.net/11676/CmfB4bc3xT3z8lqsrgqLbIGm>; NZ-ADd, Laubach & Hunt (2026), TERN Dataset; US-Ro5, Baker & Griffis (2025), <https://doi.org/10.17190/AMF/1818371>; BE-Maa, Roland et al. (2026), <https://hdl.handle.net/11676/msdWDk98FR3UQUqS9OM2N32V>. Also cite Pastorello et al. (2020), *Scientific Data*, 7, 225, <https://doi.org/10.1038/s41597-020-0534-3>.
+
+**FLUXNET acknowledgement:** FLUXNET data products were produced and harmonized by eddy covariance regional networks and data processing centers, including AmeriFlux, ChinaFlux, European Fluxes Database, ICOS, JapanFlux, KoFlux, OzFlux, SAEON, and TERN. These products also include a modified version of ERA5 hourly data provided by the Copernicus Climate Change Service.
